@@ -1,14 +1,153 @@
+import webbrowser
 
 import lasagne
 import numpy as np
+import sys
+
 import config
 import cPickle as pickle
 import gzip
 import logging
 from collections import Counter
+import os
+import json
+
+#sys.path.append(os.path.abspath("/home/suster/Apps/bmj_case_reports"))
+#from entitize.describe_data import *
+
+DATA_KEY = "data"
+VERSION_KEY = "version"
+DOC_KEY = "document"
+QAS_KEY = "qas"
+ANS_KEY = "answers"
+TXT_KEY = "text"  # the text part of the answer
+ORIG_KEY = "origin"
+ID_KEY = "id"
+TITLE_KEY = "title"
+CONTEXT_KEY = "context"
+SOURCE_KEY = "source"
+QUERY_KEY = "query"
+CUI_KEY = "cui"
+
+PLACEHOLDER_KEY = "@placeholder"
 
 
-def load_data(in_file, max_example=None, relabeling=True):
+def load_json(filename):
+    with open(filename) as in_f:
+        return json.load(in_f)
+
+
+def to_entities(text):
+    """
+    Text includes entities marked as BEG__w1 w2 w3__END. Transform to a single entity @entityw1_w2_w3.
+    """
+    word_list = []
+    inside = False
+    for w in text.split():
+        w_stripped = w.strip()
+        if w_stripped.startswith("BEG__") and w_stripped.endswith("__END"):
+            concept = [w_stripped.split("_")[2]]
+            word_list.append("@entity" + "_".join(concept))
+            if inside:  # something went wrong, leave as is
+                logging.info("Inconsistent markup.")
+        elif w_stripped.startswith("BEG__"):
+            assert not inside
+            inside = True
+            concept = [w_stripped.split("_", 2)[-1]]
+        elif w_stripped.endswith("__END"):
+            if not inside:
+                return None
+            assert inside
+            concept.append(w_stripped.rsplit("_", 2)[0])
+            word_list.append("@entity" + "_".join(concept))
+            inside = False
+        else:
+            if inside:
+                concept.append(w_stripped)
+            else:
+                word_list.append(w_stripped)
+
+    return " ".join(word_list)
+
+
+def load_data(in_file, max_example=None, relabeling=True, remove_notfound=False):
+    """
+        load Clicr train/dev/test data from json files
+
+    :param relabeling: relabels entity names in such a way that entities are unique only to the document.
+    :param remove_notfound: whether to ignore the instances whose answers are not found in the document.
+    This will bring down the output entity label space; a single entity name can stand for different concepts (anonymization).
+    """
+
+    documents = []
+    questions = []
+    answers = []
+    num_examples = 0
+    num_all = 0
+    dataset = load_json(in_file)
+
+    for datum in dataset[DATA_KEY]:
+        document = to_entities(datum[DOC_KEY][CONTEXT_KEY] + " " + datum[DOC_KEY][TITLE_KEY])
+        #if document is None:
+        #    print(datum[SOURCE_KEY])
+        #    sys.exit("")
+        document = document.lower()
+        _d_words = document.split()
+
+        assert document
+        for qa in datum[DOC_KEY][QAS_KEY]:
+            num_all += 1
+            question = to_entities(qa[QUERY_KEY]).lower()
+            assert question
+            answer = ""
+            for ans in qa[ANS_KEY]:
+                if ans[ORIG_KEY] == "dataset":
+                    answer = ("@entity" + "_".join(ans[TXT_KEY].split())).lower()
+            assert answer
+            # check if UMLS answer can be found in d
+            if remove_notfound:
+                if answer not in _d_words:
+                    found_umls = False
+                    for ans in qa[ANS_KEY]:
+                        if ans[ORIG_KEY] == "UMLS":
+                            umls_answer = ("@entity" + "_".join(ans[TXT_KEY].split())).lower()
+                            if umls_answer in _d_words:
+                                found_umls = True
+                                answer = umls_answer
+                    if not found_umls:
+                        continue
+            if relabeling:
+                _q_words = question.split()
+                entity_dict = {}
+                entity_id = 0
+                lst = _d_words + _q_words
+                if not remove_notfound:
+                    lst.append(answer)
+                for word in lst:
+                    if (word.startswith('@entity')) and (word not in entity_dict):
+                        entity_dict[word] = '@entity' + str(entity_id)
+                        entity_id += 1
+                q_words = [entity_dict[w] if w in entity_dict else w for w in _q_words]
+                answer = entity_dict[answer]
+                question = " ".join(q_words)
+                d_words = [entity_dict[w] if w in entity_dict else w for w in _d_words]
+                document = " ".join(d_words)
+
+            documents.append(document)
+            questions.append(question)
+            answers.append(answer)
+            num_examples += 1
+            if (max_example is not None) and (num_examples >= max_example):
+                break
+        if (max_example is not None) and (num_examples >= max_example):
+            break
+
+    logging.info('#Examples: %d' % len(documents))
+
+    return documents, questions, answers
+
+
+def _load_data(in_file, max_example=None, relabeling=True):
     """
         load CNN / Daily Mail data from {train | dev | test}.txt
         relabeling: relabel the entities by their first occurence if it is True.
@@ -83,7 +222,7 @@ def build_dict(sentences, max_words=50000):
 
 
 def vectorize(examples, word_dict, entity_dict,
-              sort_by_len=True, verbose=True):
+              sort_by_len=True, verbose=True, remove_notfound=False):
     """
         Vectorize `examples`.
         in_x1, in_x2: sequences for document and question respecitvely.
@@ -97,7 +236,8 @@ def vectorize(examples, word_dict, entity_dict,
     for idx, (d, q, a) in enumerate(zip(examples[0], examples[1], examples[2])):
         d_words = d.split(' ')
         q_words = q.split(' ')
-        assert (a in d_words)
+        if remove_notfound:
+            assert (a in d_words)
         seq1 = [word_dict[w] if w in word_dict else 0 for w in d_words]
         seq2 = [word_dict[w] if w in word_dict else 0 for w in q_words]
         if (len(seq1) > 0) and (len(seq2) > 0):
@@ -145,7 +285,9 @@ def get_minibatches(n, minibatch_size, shuffle=False):
 
 
 def get_dim(in_file):
-    line = open(in_file).readline()
+    fh = open(in_file)
+    fh.readline()
+    line = fh.readline()
     return len(line.split()) - 1
 
 
@@ -166,6 +308,8 @@ def gen_embeddings(word_dict, dim, in_file=None,
         pre_trained = 0
         for line in open(in_file).readlines():
             sp = line.split()
+            if len(sp) == 2:  # loading w2v-style
+                continue
             assert len(sp) == dim + 1
             if sp[0] in word_dict:
                 pre_trained += 1
@@ -193,3 +337,61 @@ def load_params(file_name):
     with gzip.open(file_name, "rb") as save_file:
         dic = pickle.load(save_file)
     return dic
+
+
+def update_plot(eval_iter, train_accs, dev_accs, file_name):
+    header = """
+        <html>
+        <head>
+        <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+        <script type="text/javascript">
+        google.charts.load('current', {
+        packages: ['corechart', 'line']
+        });
+        google.charts.setOnLoadCallback(drawCrosshairs);
+        function drawCrosshairs() {
+        var data = new google.visualization.DataTable();
+        data.addColumn('number', 'X');
+        data.addColumn('number', 'Train');
+        data.addColumn('number', 'Dev');
+
+        data.addRows([
+        """
+
+    footer = """  ]);
+        var options = {
+        hAxis: {
+          title: 'N updates'
+        },
+        vAxis: {
+          title: 'Accuracy'
+        },
+        colors: ['#a52714', '#097138'],
+        crosshair: {
+          color: '#000',
+          trigger: 'selection'
+        }
+        };
+        var chart = new google.visualization.LineChart(document.getElementById('chart_div'));
+        var options = {
+        'width': 2000,
+        'height': 1200
+        };
+        chart.draw(data, options);
+        }
+        </script>
+        </head>
+        <body>
+        <div id="chart_div" style="width: 2000px; height: 1200px;"></div>
+        </body>
+        </html>
+        """
+    with open(file_name, "w") as fh:
+        fh.write(header)
+        steps = range(eval_iter, (eval_iter * len(train_accs))+eval_iter, eval_iter)
+        for step, train_acc, dev_acc in zip(steps, train_accs, dev_accs):
+            fh.write(("[{},{},{}],\n".format(step, train_acc, dev_acc)))
+        fh.write(footer)
+    if len(train_accs) == 5:
+        url = "file://" + os.path.abspath(file_name)
+        webbrowser.get('firefox').open_new_tab(url)
