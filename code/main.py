@@ -162,7 +162,8 @@ def main(args):
 
     logging.info('-' * 50)
     logging.info('Build dictionary..')
-    word_dict = utils.build_dict(train_examples[0] + train_examples[1] + dev_examples[0] + dev_examples[1], max_words=100000)  # docs+qs
+    word_dict = utils.build_dict(train_examples[0] + train_examples[1],  # + dev_examples[0] + dev_examples[1],
+                                 max_words=args.max_words)  # docs+qs
     entity_markers = list(set([w for w in word_dict.keys()
                               if w.startswith('@entity')] + train_examples[2]))
     entity_markers = ['<unk_entity>'] + entity_markers
@@ -184,7 +185,8 @@ def main(args):
     logging.info('-' * 50)
     logging.info('Intial test..')
     dev_x1, dev_x2, dev_l, dev_y = utils.vectorize(dev_examples, word_dict, entity_dict,
-                                                   remove_notfound=args.remove_notfound)
+                                                   remove_notfound=args.remove_notfound,
+                                                   relabeling=args.relabeling)
     assert len(dev_x1) == args.num_dev
     all_dev = gen_examples(dev_x1, dev_x2, dev_l, dev_y, args.batch_size)
     dev_acc = eval_acc(test_fn, all_dev)
@@ -200,7 +202,8 @@ def main(args):
     logging.info('-' * 50)
     logging.info('Start training..')
     train_x1, train_x2, train_l, train_y = utils.vectorize(train_examples, word_dict, entity_dict,
-                                                           remove_notfound=args.remove_notfound)
+                                                           remove_notfound=args.remove_notfound,
+                                                           relabeling=args.relabeling)
     assert len(train_x1) == args.num_train
     start_time = time.time()
     n_updates = 0
@@ -236,21 +239,6 @@ def main(args):
                     logging.info('Best dev accuracy: epoch = %d, n_udpates = %d, acc = %.2f %%'
                                  % (epoch, n_updates, dev_acc))
                     utils.save_params(args.model_file, params, epoch=epoch, n_updates=n_updates)
-        #samples = sorted(np.random.choice(args.num_train, min(args.num_train, args.num_dev),
-        #                                  replace=False))
-        #sample_train = gen_examples([train_x1[k] for k in samples],
-        #                            [train_x2[k] for k in samples],
-        #                            train_l[samples],
-        #                            [train_y[k] for k in samples],
-        #                            args.batch_size)
-        #logging.info('Epoch %d Train accuracy: %.2f %%' % (epoch, eval_acc(test_fn, sample_train)))
-        #dev_acc = eval_acc(test_fn, all_dev)
-        #logging.info('Epoch %d Dev accuracy: %.2f %%' % (epoch, dev_acc))
-        #if dev_acc > best_acc:
-        #    best_acc = dev_acc
-        #    logging.info('Best dev accuracy: epoch = %d, n_udpates = %d, acc = %.2f %%'
-        #                 % (epoch, n_updates, dev_acc))
-        #    utils.save_params(args.model_file, params, epoch=epoch, n_updates=n_updates)
 
 
 if __name__ == '__main__':

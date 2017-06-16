@@ -66,11 +66,6 @@ def get_args():
                         default=None,
                         help='Maximum number of dev examples to evaluate on')
 
-    parser.add_argument('--relabeling',
-                        type='bool',
-                        default=True,
-                        help='Whether to relabel the entities when loading the data')
-
     # Model details
     parser.add_argument('--embedding_size',
                         type=int,
@@ -138,4 +133,16 @@ def get_args():
                         default=10.0,
                         help='Gradient clipping')
 
+    parser.add_argument('--relabeling',
+                        type='bool',
+                        default=True,
+                        help='Whether to relabel the entities when loading the data')
+    parser.add_argument('--remove_notfound',
+                        type='bool',
+                        default=True,
+                        help='Whether to remove instances whose answers are not found in document')
+    parser.add_argument('--max_words',
+                        type=int,
+                        default=50000,
+                        help='Only the max_words ones are kept and the remaining will be mapped to <UNK>')
     return parser.parse_args()

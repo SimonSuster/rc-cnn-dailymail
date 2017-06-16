@@ -88,9 +88,6 @@ def load_data(in_file, max_example=None, relabeling=True, remove_notfound=False)
 
     for datum in dataset[DATA_KEY]:
         document = to_entities(datum[DOC_KEY][CONTEXT_KEY] + " " + datum[DOC_KEY][TITLE_KEY])
-        #if document is None:
-        #    print(datum[SOURCE_KEY])
-        #    sys.exit("")
         document = document.lower()
         _d_words = document.split()
 
@@ -222,7 +219,7 @@ def build_dict(sentences, max_words=50000):
 
 
 def vectorize(examples, word_dict, entity_dict,
-              sort_by_len=True, verbose=True, remove_notfound=False):
+              sort_by_len=True, verbose=True, remove_notfound=False, relabeling=False):
     """
         Vectorize `examples`.
         in_x1, in_x2: sequences for document and question respecitvely.
@@ -243,7 +240,14 @@ def vectorize(examples, word_dict, entity_dict,
         if (len(seq1) > 0) and (len(seq2) > 0):
             in_x1.append(seq1)
             in_x2.append(seq2)
+            #if not remove_notfound and not relabeling:
+            #    if a in d_words:
+            #        in_l[idx, [entity_dict[w] for w in d_words if w in entity_dict]] = 1.0
+            #    else:  # if a not in d, assume enlarge the a set to all possible answers
+            #        in_l[idx, :] = 1.0
+            #else:
             in_l[idx, [entity_dict[w] for w in d_words if w in entity_dict]] = 1.0
+
             in_y.append(entity_dict[a] if a in entity_dict else 0)
         if verbose and (idx % 10000 == 0):
             logging.info('Vectorization: processed %d / %d' % (idx, len(examples[0])))
