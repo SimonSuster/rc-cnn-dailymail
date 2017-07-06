@@ -145,4 +145,8 @@ def get_args():
                         type=int,
                         default=50000,
                         help='Only the max_words ones are kept and the remaining will be mapped to <UNK>')
+    parser.add_argument('--att_output',
+                        type='bool',
+                        default=True,
+                        help='Whether to output attention weights')
     return parser.parse_args()

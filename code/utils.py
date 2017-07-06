@@ -1,8 +1,8 @@
+import subprocess
 import webbrowser
 
 import lasagne
 import numpy as np
-import sys
 
 import config
 import cPickle as pickle
@@ -11,9 +11,6 @@ import logging
 from collections import Counter
 import os
 import json
-
-#sys.path.append(os.path.abspath("/home/suster/Apps/bmj_case_reports"))
-#from entitize.describe_data import *
 
 DATA_KEY = "data"
 VERSION_KEY = "version"
@@ -30,6 +27,36 @@ QUERY_KEY = "query"
 CUI_KEY = "cui"
 
 PLACEHOLDER_KEY = "@placeholder"
+
+
+def document_instance(context, title, qas):
+    return {"context": context, "title": title, "qas": qas}
+
+
+def dataset_instance(version, data):
+    return {"version": version, "data": data}
+
+
+def datum_instance(document, source):
+        return {"document": document, "source": source}
+
+
+def intersect_on_ids(dataset, predictions):
+    """
+    Reduce data to include only those qa ids which occur in predictions.
+    """
+    new_data = []
+
+    for datum in dataset[DATA_KEY]:
+        qas = []
+        for qa in datum[DOC_KEY][QAS_KEY]:
+            if qa[ID_KEY] in predictions:
+                qas.append(qa)
+        if qas:
+            new_doc = document_instance(datum[DOC_KEY][CONTEXT_KEY], datum[DOC_KEY][TITLE_KEY], qas)
+            new_data.append(datum_instance(new_doc, datum[SOURCE_KEY]))
+
+    return dataset_instance(dataset[VERSION_KEY], new_data)
 
 
 def load_json(filename):
@@ -82,12 +109,13 @@ def load_data(in_file, max_example=None, relabeling=True, remove_notfound=False)
     documents = []
     questions = []
     answers = []
+    ids = []  # [(qa_id: entity_dict)]
     num_examples = 0
     num_all = 0
     dataset = load_json(in_file)
 
     for datum in dataset[DATA_KEY]:
-        document = to_entities(datum[DOC_KEY][CONTEXT_KEY] + " " + datum[DOC_KEY][TITLE_KEY])
+        document = to_entities(datum[DOC_KEY][CONTEXT_KEY] + " " + datum[DOC_KEY][TITLE_KEY])  # TODO: move title to front
         document = document.lower()
         _d_words = document.split()
 
@@ -114,6 +142,7 @@ def load_data(in_file, max_example=None, relabeling=True, remove_notfound=False)
                     if not found_umls:
                         continue
             if relabeling:
+                assert answer in _d_words
                 _q_words = question.split()
                 entity_dict = {}
                 entity_id = 0
@@ -125,11 +154,15 @@ def load_data(in_file, max_example=None, relabeling=True, remove_notfound=False)
                         entity_dict[word] = '@entity' + str(entity_id)
                         entity_id += 1
                 q_words = [entity_dict[w] if w in entity_dict else w for w in _q_words]
-                answer = entity_dict[answer]
-                question = " ".join(q_words)
                 d_words = [entity_dict[w] if w in entity_dict else w for w in _d_words]
+                question = " ".join(q_words)
                 document = " ".join(d_words)
-
+                answer = entity_dict[answer]
+                inv_entity_dict = {ent_id: ent_ans for ent_ans, ent_id in entity_dict.items()}
+                assert len(entity_dict) == len(inv_entity_dict)
+                ids.append((qa[ID_KEY], inv_entity_dict))
+            else:
+                ids.append((qa[ID_KEY], None))
             documents.append(document)
             questions.append(question)
             answers.append(answer)
@@ -141,10 +174,10 @@ def load_data(in_file, max_example=None, relabeling=True, remove_notfound=False)
 
     logging.info('#Examples: %d' % len(documents))
 
-    return documents, questions, answers
+    return documents, questions, answers, ids
 
 
-def _load_data(in_file, max_example=None, relabeling=True):
+def load_cnn_data(in_file, max_example=None, relabeling=True):
     """
         load CNN / Daily Mail data from {train | dev | test}.txt
         relabeling: relabel the entities by their first occurence if it is True.
@@ -230,6 +263,7 @@ def vectorize(examples, word_dict, entity_dict,
     in_x2 = []
     in_l = np.zeros((len(examples[0]), len(entity_dict))).astype(config._floatX)
     in_y = []
+    ids = examples[3]
     for idx, (d, q, a) in enumerate(zip(examples[0], examples[1], examples[2])):
         d_words = d.split(' ')
         q_words = q.split(' ')
@@ -262,8 +296,8 @@ def vectorize(examples, word_dict, entity_dict,
         in_x2 = [in_x2[i] for i in sorted_index]
         in_l = in_l[sorted_index]
         in_y = [in_y[i] for i in sorted_index]
-
-    return in_x1, in_x2, in_l, in_y
+        ids = [ids[i] for i in sorted_index]
+    return in_x1, in_x2, in_l, in_y, ids
 
 
 def prepare_data(seqs):
@@ -341,6 +375,133 @@ def load_params(file_name):
     with gzip.open(file_name, "rb") as save_file:
         dic = pickle.load(save_file)
     return dic
+
+
+def save_json(obj, filename):
+    with open(filename, "w") as out:
+        json.dump(obj, out, separators=(',', ':'))
+
+
+def write_preds(preds, file_name):
+    """
+    :param preds: {q_id: answer, ...}
+
+    Write predictions as a json file.
+    """
+    save_json(preds, file_name)
+
+
+def write_att(atts, file_name):
+    """
+    :param atts: {q_id: [(w,att),...], ...}
+
+    Write as a json file.
+    """
+    save_json(atts, file_name)
+
+
+def att_html(preds_file_name, preds_att_file_name, qid, html_file):
+    header = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="googlebot" content="noindex, nofollow">
+    <script type="text/javascript" src="http://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.js"></script>
+    <link rel="stylesheet" type="text/css" href="/css/result-light.css">
+    <style type="text/css">
+    </style>
+    <title></title>
+    <script type="text/javascript">//<![CDATA[
+    window.onload=function(){
+    var words = ["""
+
+    footer_start = """];
+
+    $('#text').html($.map(words, function(w) {
+    return '<span style="background-color:hsl(360,100%,' + ((1-w.attention) * 50 + 50) + '%)">' + w.word + ' </span>'
+    }))
+
+    }//]]>
+
+    </script>
+
+
+    </head>
+
+    <body>
+    <div id="text">text goes here</div><br>
+    """
+
+    footer_end = """
+    <script>
+    // tell the embed parent frame the height of the content
+    if (window.parent && window.parent.parent){
+window.parent.parent.postMessage(["resultsFrame", {
+height: document.body.getBoundingClientRect().height,
+slug: "r3o4mgum"
+}], "*")
+}
+</script>
+
+</body>
+
+</html>
+    """
+
+    def js_format(w, att):
+        return "{{\'word\': \'{}\', \'attention\': {}}}".format(w.replace("\'", "&quot;").replace("\"", "&quot;"), att)
+
+    def rescale(atts):
+        atts = np.array(atts)
+        max_v = np.max(atts)
+        min_v = np.min(atts)
+        diff = max_v - min_v
+        return (atts - min_v) / diff
+
+    preds = load_json(preds_file_name)
+    atts = load_json(preds_att_file_name)
+    a = preds[qid]
+    d_att = atts[qid]["d_att"]
+    q = atts[qid]["q"]
+
+    core_ws = []
+    core_atts = []
+    for w, att in d_att:
+        core_ws.append(w)
+        core_atts.append(att)
+
+    core_atts = rescale(core_atts)
+    core_lst = [js_format(w, att) for w, att in zip(core_ws, core_atts)]
+    core = ",\n".join(core_lst).replace("@entity", "@")
+
+    footer_qa = """
+        <div id="q">{}</div><br>
+        <div id="a">{}</div>
+        """.format(" ".join(q).replace("@entity", "@").replace("@placeholder", "<span style=\"font-weight:bold\">@placeholder</span>"),
+                   "<span style=\"font-weight:bold\">{}</span>".format(a))
+    with open(html_file, "w") as fh:
+        fh.write(header)
+        fh.write(core)
+        fh.write(footer_start + footer_qa + footer_end)
+
+
+def external_eval(preds_file, file_name):
+    logging.info("External evaluation, penalizing unanswered...")
+    eval_dataset = "/mnt/b5320167-5dbd-4498-bf34-173ac5338c8d/Datasets/bmj_case_reports_data/dataset_json_concept_annotated/dev1.0.json"
+    cmd = "python3 /home/suster/Apps/bmj_case_reports/evaluate.py -dataset_file {} -prediction_file {} -embeddings_file /mnt/b5320167-5dbd-4498-bf34-173ac5338c8d/Datasets/bmj_case_reports_data/embeddings/c47cfee6-3fc4-11e7-b5a2-4ccc6a436494/embeddings -downcase".format(eval_dataset, preds_file)
+    cmd_open = subprocess.check_output(cmd, shell=True)
+    with open(file_name, "w") as fh:
+        fh.write(cmd_open)
+
+    logging.info("External evaluation, NOT penalizing unanswered...")
+    save_json(intersect_on_ids(load_json(eval_dataset), load_json(preds_file)), "/tmp/small.json")
+    cmd = "python3 /home/suster/Apps/bmj_case_reports/evaluate.py -dataset_file /tmp/small.json -prediction_file {} -embeddings_file /mnt/b5320167-5dbd-4498-bf34-173ac5338c8d/Datasets/bmj_case_reports_data/embeddings/c47cfee6-3fc4-11e7-b5a2-4ccc6a436494/embeddings -downcase".format(
+        preds_file)
+    cmd_open = subprocess.check_output(cmd, shell=True)
+    with open(file_name+".no_penal", "w") as fh:
+        fh.write(cmd_open)
 
 
 def update_plot(eval_iter, train_accs, dev_accs, file_name):

@@ -71,8 +71,10 @@ def build_fn(args, embeddings):
         att = nn_layers.MLPAttentionLayer([network1, network2], args.rnn_output_size,
                                           mask_input=l_mask1)
     elif args.att_func == 'bilinear':
-        att = nn_layers.BilinearAttentionLayer([network1, network2], args.rnn_output_size,
-                                               mask_input=l_mask1)
+        att_inspect = nn_layers.InspectBilinearAttentionLayer([network1, network2], args.rnn_output_size,
+                                               mask_input=in_mask1)
+        alphas = lasagne.layers.get_output(att_inspect, deterministic=True)
+        att = nn_layers.BilinearAttentionLayer([network1, network2], alphas)
     elif args.att_func == 'avg':
         att = nn_layers.AveragePoolingLayer(network1, mask_input=l_mask1)
     elif args.att_func == 'last':
@@ -101,7 +103,11 @@ def build_fn(args, embeddings):
     test_prob = lasagne.layers.get_output(network, deterministic=True) * in_l
     test_prediction = T.argmax(test_prob, axis=-1)
     acc = T.sum(T.eq(test_prediction, in_y))
-    test_fn = theano.function([in_x1, in_mask1, in_x2, in_mask2, in_l, in_y], acc)
+
+    output_lst = [acc, test_prediction]
+    if args.att_output:
+        output_lst.append(alphas)
+    test_fn = theano.function([in_x1, in_mask1, in_x2, in_mask2, in_l, in_y], output_lst)
 
     # Train functions
     train_prediction = lasagne.layers.get_output(network) * in_l
@@ -126,16 +132,113 @@ def build_fn(args, embeddings):
     return train_fn, test_fn, params
 
 
-def eval_acc(test_fn, all_examples):
+def eval_acc(test_fn, all_examples, att_output):
     """
         Evaluate accuracy on `all_examples`.
     """
     acc = 0
+    all_preds = []
+    all_att_ws = []
+    all_qs = []
     n_examples = 0
     for x1, mask1, x2, mask2, l, y in all_examples:
-        acc += test_fn(x1, mask1, x2, mask2, l, y)
+        if att_output:
+            _acc, preds, att_ws = test_fn(x1, mask1, x2, mask2, l, y)
+            # filter out the "empty" elements in att_ws, present because of batching
+            for i in range(mask1.shape[0]):
+                positions_true = np.where(mask1[i])
+                att_ws_true = att_ws[i][positions_true]
+                x1_true = x1[i][positions_true]
+                assert len(att_ws_true) == len(x1_true)
+                all_att_ws.append(list(zip(x1_true, att_ws_true)))  # [(id, att), ...]
+            for i in range(mask2.shape[0]):
+                positions_true = np.where(mask2[i])
+                x2_true = x2[i][positions_true]
+                all_qs.append(x2_true)
+        else:
+            _acc, preds = test_fn(x1, mask1, x2, mask2, l, y)
+        assert len(y) == len(preds)
+        acc += _acc
+        all_preds.extend(preds)
         n_examples += len(x1)
-    return acc * 100.0 / n_examples
+
+    return acc * 100.0 / n_examples, all_preds, all_att_ws, all_qs
+
+
+def to_output_preds(ids, preds, inv_entity_dict, relabeling):
+    """
+    :param ids: [(id: {@entity0: @entityAnswer})] if relabeling was on; otw [(id: None)]
+    """
+    if not relabeling:
+        raise NotImplementedError
+
+    def get_answer_text(ids, q_id, answer):
+        answer_text = None
+        for i in ids:
+            if i[0] == q_id:
+                try:
+                    answer_text = i[1][answer]
+                except KeyError:
+                    print()
+        assert answer_text is not None
+        return answer_text
+
+    def prepare_answer(txt):
+        assert txt.startswith("@entity")
+        return txt[len("@entity"):].replace("_", " ")
+
+    qid_ans_lst = list(zip((i[0] for i in ids), (inv_entity_dict[index] for index in preds)))
+    # answers are anonymized under relabeling
+    if relabeling:
+        qid_ans = {q_id: prepare_answer(get_answer_text(ids, q_id, answer)) for q_id, answer in qid_ans_lst}
+
+    return qid_ans
+
+
+def to_output_att(ids, relabeling, att_weights, qs, inv_word_dict):
+    """
+    :param ids: [(id: {@entity0: @entityAnswer})] if relabeling was on; otw [(id: None)]
+    :param att_weights: [[(w_id, att), ...], ...]
+    """
+    if not relabeling:
+        raise NotImplementedError
+
+    qid_p_atts = {}
+    assert len(att_weights) == len(qs)
+    for n, instance in enumerate(att_weights):
+        deindexed_x1 = []
+        for i, att in instance:
+            if i == 0:
+                deindexed_x1.append(("UNK", float(att)))
+            else:
+                deindexed_x1.append((inv_word_dict[i], float(att)))
+        final_deindexed_x1 = []
+        if relabeling:
+            for w, att in deindexed_x1:
+                if w in ids[n][1]:
+                    final_deindexed_x1.append((ids[n][1][w], att))
+                else:
+                    final_deindexed_x1.append((w, att))
+        else:
+            final_deindexed_x1 = deindexed_x1
+        deindexed_x2 = []
+        for i in qs[n]:
+            if i == 0:
+                deindexed_x2.append("UNK")
+            else:
+                deindexed_x2.append(inv_word_dict[i])
+        final_deindexed_x2 = []
+        if relabeling:
+            for w in deindexed_x2:
+                if w in ids[n][1]:
+                    final_deindexed_x2.append(ids[n][1][w])
+                else:
+                    final_deindexed_x2.append(w)
+        else:
+            final_deindexed_x2 = deindexed_x2
+        qid_p_atts[ids[n][0]] = {"d_att": final_deindexed_x1, "q": final_deindexed_x2}
+
+    return qid_p_atts
 
 
 def main(args):
@@ -144,10 +247,16 @@ def main(args):
 
     if args.debug:
         logging.info('*' * 10 + ' Train')
-        train_examples = utils.load_data(args.train_file, 100, relabeling=args.relabeling,
+        train_examples = utils.load_data(args.train_file, 5, relabeling=args.relabeling,
                                          remove_notfound=args.remove_notfound)
         logging.info('*' * 10 + ' Dev')
         dev_examples = utils.load_data(args.dev_file, 100, relabeling=args.relabeling,
+                                       remove_notfound=args.remove_notfound)
+    elif args.test_only:
+        logging.info('*' * 10 + ' Train')
+        train_examples = utils.load_cnn_data(args.train_file, relabeling=args.relabeling)  # docs, qs, ans
+        logging.info('*' * 10 + ' Dev')
+        dev_examples = utils.load_data(args.dev_file, args.max_dev, relabeling=args.relabeling,
                                        remove_notfound=args.remove_notfound)
     else:
         logging.info('*' * 10 + ' Train')
@@ -168,6 +277,8 @@ def main(args):
                               if w.startswith('@entity')] + train_examples[2]))
     entity_markers = ['<unk_entity>'] + entity_markers
     entity_dict = {w: index for (index, w) in enumerate(entity_markers)}
+    inv_entity_dict = {index: w for w, index in entity_dict.items()}
+    assert len(entity_dict) == len(inv_entity_dict)
     logging.info('Entity markers: %d' % len(entity_dict))
     args.num_labels = len(entity_dict)
 
@@ -184,14 +295,37 @@ def main(args):
 
     logging.info('-' * 50)
     logging.info('Intial test..')
-    dev_x1, dev_x2, dev_l, dev_y = utils.vectorize(dev_examples, word_dict, entity_dict,
+    dev_x1, dev_x2, dev_l, dev_y, dev_ids = utils.vectorize(dev_examples, word_dict, entity_dict,
                                                    remove_notfound=args.remove_notfound,
                                                    relabeling=args.relabeling)
+    assert len(dev_y) == len(dev_ids)
     assert len(dev_x1) == args.num_dev
     all_dev = gen_examples(dev_x1, dev_x2, dev_l, dev_y, args.batch_size)
-    dev_acc = eval_acc(test_fn, all_dev)
+    dev_acc, dev_preds, dev_att_ws, dev_qs = eval_acc(test_fn, all_dev, args.att_output)
+
+    assert len(dev_ids) == len(dev_preds) == len(dev_y)
+    if args.att_output:
+        assert dev_att_ws
+        assert len(dev_preds) == len(dev_att_ws)
+    dev_preds_data = to_output_preds(dev_ids, dev_preds, inv_entity_dict, args.relabeling)
+    dev_att_data = to_output_att(dev_ids, args.relabeling, dev_att_ws, dev_qs, {index: w for w, index in word_dict.items()})
     logging.info('Dev accuracy: %.2f %%' % dev_acc)
     best_acc = dev_acc
+
+    if args.log_file is not None:
+        assert args.log_file.endswith(".log")
+        run_name = args.log_file[:args.log_file.find(".log")]
+        preds_file_name = run_name + ".preds"
+        utils.write_preds(dev_preds_data, preds_file_name)
+        utils.external_eval(preds_file_name, run_name + ".preds.scores")
+        if args.att_output:
+            import json
+            def save_json(obj, filename):
+                with open(filename, "w") as out:
+                    json.dump(obj, out, separators=(',', ':'))
+            save_json(dev_ids, run_name + ".preds.ids")
+            preds_att_file_name = preds_file_name + ".att"
+            utils.write_att(dev_att_data, preds_att_file_name)
 
     if args.test_only:
         return
@@ -201,7 +335,7 @@ def main(args):
     # Training
     logging.info('-' * 50)
     logging.info('Start training..')
-    train_x1, train_x2, train_l, train_y = utils.vectorize(train_examples, word_dict, entity_dict,
+    train_x1, train_x2, train_l, train_y, train_ids = utils.vectorize(train_examples, word_dict, entity_dict,
                                                            remove_notfound=args.remove_notfound,
                                                            relabeling=args.relabeling)
     assert len(train_x1) == args.num_train
@@ -227,10 +361,10 @@ def main(args):
                                             train_l[samples],
                                             [train_y[k] for k in samples],
                                             args.batch_size)
-                train_acc = eval_acc(test_fn, sample_train)
+                train_acc, train_preds, train_att_ws = eval_acc(test_fn, sample_train, args.att_output)
                 train_accs.append(train_acc)
                 logging.info('Train accuracy: %.2f %%' % train_acc)
-                dev_acc = eval_acc(test_fn, all_dev)
+                dev_acc, dev_preds, dev_att_ws = eval_acc(test_fn, all_dev, args.att_output)
                 dev_accs.append(dev_acc)
                 logging.info('Dev accuracy: %.2f %%' % dev_acc)
                 utils.update_plot(args.eval_iter, train_accs, dev_accs, file_name=args.log_file + ".html")
@@ -238,7 +372,12 @@ def main(args):
                     best_acc = dev_acc
                     logging.info('Best dev accuracy: epoch = %d, n_udpates = %d, acc = %.2f %%'
                                  % (epoch, n_updates, dev_acc))
-                    utils.save_params(args.model_file, params, epoch=epoch, n_updates=n_updates)
+                    if args.log_file is not None:
+                        #utils.save_params(args.model_file, params, epoch=epoch, n_updates=n_updates)
+                        utils.save_params(run_name + ".model", params, epoch=epoch, n_updates=n_updates)
+                        dev_preds_data = to_output_preds(dev_ids, dev_preds, inv_entity_dict, args.relabeling)
+                        utils.write_preds(dev_preds_data, preds_file_name)
+                        utils.external_eval(preds_file_name, run_name + ".preds.scores")
 
 
 if __name__ == '__main__':

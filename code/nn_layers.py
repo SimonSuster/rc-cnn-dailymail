@@ -1,6 +1,6 @@
 import theano.tensor as T
 import lasagne
-
+import numpy as np
 
 def stack_rnn(l_emb, l_mask, num_layers, num_units,
               grad_clipping=10, dropout_rate=0.,
@@ -94,7 +94,7 @@ class MLPAttentionLayer(lasagne.layers.MergeLayer):
         return T.sum(inputs[0] * alpha.dimshuffle(0, 1, 'x'), axis=1)
 
 
-class BilinearAttentionLayer(lasagne.layers.MergeLayer):
+class _Chen_BilinearAttentionLayer(lasagne.layers.MergeLayer):
     """
         A bilinear attention layer.
         incomings[0]: batch x len x h
@@ -126,6 +126,104 @@ class BilinearAttentionLayer(lasagne.layers.MergeLayer):
             alpha = alpha * inputs[2]
             alpha = alpha / alpha.sum(axis=1).reshape((alpha.shape[0], 1))
         return T.sum(inputs[0] * alpha.dimshuffle(0, 1, 'x'), axis=1)
+
+
+class BilinearAttentionLayer(lasagne.layers.MergeLayer):
+    """
+    Layer which implements the bilinear attention described in Stanfor AR (Chen, 2016).
+    Takes a 3D tensor P and a 2D tensor Q as input, outputs  a 2D tensor which is Ps
+    weighted average along the second dimension, and weights are q_i^T W p_i attention
+    vectors for each element in batch of P and Q.
+    If mask_input is provided it will be applied to the output attention vectors before
+    averaging. Mask input should be theano variable and not lasagne layer.
+    """
+
+    def __init__(self, incomings, alphas, **kwargs):
+        super(BilinearAttentionLayer, self).__init__(incomings, **kwargs)
+        self.alphas = alphas
+
+    def get_output_shape_for(self, input_shapes):
+        return (input_shapes[0][0], input_shapes[0][2])
+
+    def get_output_for(self, inputs, **kwargs):
+
+        # inputs[0]: # B x N x H
+        # inputs[1]: # B x H
+        # self.W: H x H
+        # self.mask: # B x N
+
+        return (inputs[0]*self.alphas[:,:,np.newaxis]).sum(axis=1)
+
+
+class InspectBilinearAttentionLayer(lasagne.layers.MergeLayer):
+    """
+    Layer which implements the bilinear attention described in Stanfor AR (Chen, 2016).
+    Takes a 3D tensor P and a 2D tensor Q as input, outputs  a 2D tensor which is Ps
+    weighted average along the second dimension, and weights are q_i^T W p_i attention
+    vectors for each element in batch of P and Q.
+    If mask_input is provided it will be applied to the output attention vectors before
+    averaging. Mask input should be theano variable and not lasagne layer.
+    """
+
+    def __init__(self, incomings, num_units, init=lasagne.init.Uniform(),
+            mask_input=None, **kwargs):
+        super(InspectBilinearAttentionLayer, self).__init__(incomings, **kwargs)
+        self.num_units = num_units
+        if mask_input is not None and type(mask_input).__name__!='TensorVariable':
+            raise TypeError('Mask input must be theano tensor variable')
+        self.mask = mask_input
+        self.W = self.add_param(init, (num_units, num_units), name='W')
+
+    def get_output_shape_for(self, input_shapes):
+        return (input_shapes[0][1], input_shapes[0][0])
+
+    def get_output_for(self, inputs, **kwargs):
+
+        # inputs[0]: # B x N x H
+        # inputs[1]: # B x H
+        # self.W: H x H
+        # self.mask: # B x N
+
+        qW = T.dot(inputs[1], self.W) # B x H
+        qWp = (inputs[0]*qW[:,np.newaxis,:]).sum(axis=2)
+        alphas = T.nnet.softmax(qWp)
+        if self.mask is not None:
+            alphas = alphas*self.mask
+            alphas = alphas/alphas.sum(axis=1)[:,np.newaxis]
+        return alphas
+
+class _chen_InspectBilinearAttentionLayer(lasagne.layers.MergeLayer):
+    """
+        A bilinear attention layer, for inspection.
+        incomings[0]: batch x len x h
+        incomings[1]: batch x h
+    """
+    def __init__(self, incomings, num_units,
+                 mask_input=None,
+                 init=lasagne.init.Uniform(), **kwargs):
+        if len(incomings) != 2:
+            raise NotImplementedError
+        if mask_input is not None:
+            incomings.append(mask_input)
+        super(InspectBilinearAttentionLayer, self).__init__(incomings, **kwargs)
+        self.num_units = num_units
+        self.W = self.add_param(init, (self.num_units, self.num_units), name='W_bilinear_inspect')
+
+    def get_output_shape_for(self, input_shapes):
+        return input_shapes[0][1], input_shapes[0][0]
+
+    def get_output_for(self, inputs, **kwargs):
+
+        # inputs[0]: batch * len * h
+        # inputs[1]: batch * h
+        # W: h * h
+
+        M = T.dot(inputs[1], self.W).dimshuffle(0, 'x', 1)
+        alpha = T.nnet.softmax(T.sum(inputs[0] * M, axis=2))  # len * batch
+        if len(inputs) == 3:
+            alpha = alpha * inputs[2]
+            alpha = alpha / alpha.sum(axis=1).reshape((alpha.shape[0], 1))
+        return alpha
 
 
 class DotProductAttentionLayer(lasagne.layers.MergeLayer):
