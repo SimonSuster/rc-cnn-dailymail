@@ -258,6 +258,11 @@ def main(args):
         logging.info('*' * 10 + ' Dev')
         dev_examples = utils.load_data(args.dev_file, args.max_dev, relabeling=args.relabeling,
                                        remove_notfound=args.remove_notfound)
+    elif args.cnn_train:
+        logging.info('*' * 10 + ' Train')
+        train_examples = utils.load_cnn_data(args.train_file, relabeling=args.relabeling)  # docs, qs, ans
+        logging.info('*' * 10 + ' Dev')
+        dev_examples = utils.load_cnn_data(args.dev_file, args.max_dev, relabeling=args.relabeling)
     else:
         logging.info('*' * 10 + ' Train')
         train_examples = utils.load_data(args.train_file, relabeling=args.relabeling,
@@ -298,34 +303,38 @@ def main(args):
     dev_x1, dev_x2, dev_l, dev_y, dev_ids = utils.vectorize(dev_examples, word_dict, entity_dict,
                                                    remove_notfound=args.remove_notfound,
                                                    relabeling=args.relabeling)
-    assert len(dev_y) == len(dev_ids)
+    if dev_ids is not None:
+        assert len(dev_y) == len(dev_ids)
     assert len(dev_x1) == args.num_dev
     all_dev = gen_examples(dev_x1, dev_x2, dev_l, dev_y, args.batch_size)
     dev_acc, dev_preds, dev_att_ws, dev_qs = eval_acc(test_fn, all_dev, args.att_output)
 
-    assert len(dev_ids) == len(dev_preds) == len(dev_y)
+    if dev_ids is not None:
+        assert len(dev_ids) == len(dev_preds) == len(dev_y)
     if args.att_output:
         assert dev_att_ws
         assert len(dev_preds) == len(dev_att_ws)
-    dev_preds_data = to_output_preds(dev_ids, dev_preds, inv_entity_dict, args.relabeling)
-    dev_att_data = to_output_att(dev_ids, args.relabeling, dev_att_ws, dev_qs, {index: w for w, index in word_dict.items()})
+    if dev_ids is not None:
+        dev_preds_data = to_output_preds(dev_ids, dev_preds, inv_entity_dict, args.relabeling)
+        dev_att_data = to_output_att(dev_ids, args.relabeling, dev_att_ws, dev_qs, {index: w for w, index in word_dict.items()})
     logging.info('Dev accuracy: %.2f %%' % dev_acc)
     best_acc = dev_acc
 
     if args.log_file is not None:
         assert args.log_file.endswith(".log")
         run_name = args.log_file[:args.log_file.find(".log")]
-        preds_file_name = run_name + ".preds"
-        utils.write_preds(dev_preds_data, preds_file_name)
-        utils.external_eval(preds_file_name, run_name + ".preds.scores")
-        if args.att_output:
-            import json
-            def save_json(obj, filename):
-                with open(filename, "w") as out:
-                    json.dump(obj, out, separators=(',', ':'))
-            save_json(dev_ids, run_name + ".preds.ids")
-            preds_att_file_name = preds_file_name + ".att"
-            utils.write_att(dev_att_data, preds_att_file_name)
+        if dev_ids is not None:
+            preds_file_name = run_name + ".preds"
+            utils.write_preds(dev_preds_data, preds_file_name)
+            utils.external_eval(preds_file_name, run_name + ".preds.scores", args.dev_file)
+            if args.att_output:
+                import json
+                def save_json(obj, filename):
+                    with open(filename, "w") as out:
+                        json.dump(obj, out, separators=(',', ':'))
+                save_json(dev_ids, run_name + ".preds.ids")
+                preds_att_file_name = preds_file_name + ".att"
+                utils.write_att(dev_att_data, preds_att_file_name)
 
     if args.test_only:
         return
@@ -361,10 +370,10 @@ def main(args):
                                             train_l[samples],
                                             [train_y[k] for k in samples],
                                             args.batch_size)
-                train_acc, train_preds, train_att_ws = eval_acc(test_fn, sample_train, args.att_output)
+                train_acc, train_preds, train_att_ws, train_qs = eval_acc(test_fn, sample_train, args.att_output)
                 train_accs.append(train_acc)
                 logging.info('Train accuracy: %.2f %%' % train_acc)
-                dev_acc, dev_preds, dev_att_ws = eval_acc(test_fn, all_dev, args.att_output)
+                dev_acc, dev_preds, dev_att_ws, dev_qs = eval_acc(test_fn, all_dev, args.att_output)
                 dev_accs.append(dev_acc)
                 logging.info('Dev accuracy: %.2f %%' % dev_acc)
                 utils.update_plot(args.eval_iter, train_accs, dev_accs, file_name=args.log_file + ".html")
@@ -375,9 +384,10 @@ def main(args):
                     if args.log_file is not None:
                         #utils.save_params(args.model_file, params, epoch=epoch, n_updates=n_updates)
                         utils.save_params(run_name + ".model", params, epoch=epoch, n_updates=n_updates)
-                        dev_preds_data = to_output_preds(dev_ids, dev_preds, inv_entity_dict, args.relabeling)
-                        utils.write_preds(dev_preds_data, preds_file_name)
-                        utils.external_eval(preds_file_name, run_name + ".preds.scores")
+                        if dev_ids is not None:
+                            dev_preds_data = to_output_preds(dev_ids, dev_preds, inv_entity_dict, args.relabeling)
+                            utils.write_preds(dev_preds_data, preds_file_name)
+                            utils.external_eval(preds_file_name, run_name + ".preds.scores", args.dev_file)
 
 
 if __name__ == '__main__':

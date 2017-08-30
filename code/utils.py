@@ -263,7 +263,7 @@ def vectorize(examples, word_dict, entity_dict,
     in_x2 = []
     in_l = np.zeros((len(examples[0]), len(entity_dict))).astype(config._floatX)
     in_y = []
-    ids = examples[3]
+    ids = None
     for idx, (d, q, a) in enumerate(zip(examples[0], examples[1], examples[2])):
         d_words = d.split(' ')
         q_words = q.split(' ')
@@ -290,13 +290,16 @@ def vectorize(examples, word_dict, entity_dict,
         return sorted(range(len(seq)), key=lambda x: len(seq[x]))
 
     if sort_by_len:
+        if len(examples) == 4:
+            ids = examples[3]
         # sort by the document length
         sorted_index = len_argsort(in_x1)
         in_x1 = [in_x1[i] for i in sorted_index]
         in_x2 = [in_x2[i] for i in sorted_index]
         in_l = in_l[sorted_index]
         in_y = [in_y[i] for i in sorted_index]
-        ids = [ids[i] for i in sorted_index]
+        if ids is not None:
+            ids = [ids[i] for i in sorted_index]
     return in_x1, in_x2, in_l, in_y, ids
 
 
@@ -487,17 +490,16 @@ slug: "r3o4mgum"
         fh.write(footer_start + footer_qa + footer_end)
 
 
-def external_eval(preds_file, file_name):
+def external_eval(preds_file, file_name, eval_dataset):
     logging.info("External evaluation, penalizing unanswered...")
-    eval_dataset = "/mnt/b5320167-5dbd-4498-bf34-173ac5338c8d/Datasets/bmj_case_reports_data/dataset_json_concept_annotated/dev1.0.json"
-    cmd = "python3 /home/suster/Apps/bmj_case_reports/evaluate.py -dataset_file {} -prediction_file {} -embeddings_file /mnt/b5320167-5dbd-4498-bf34-173ac5338c8d/Datasets/bmj_case_reports_data/embeddings/c47cfee6-3fc4-11e7-b5a2-4ccc6a436494/embeddings -downcase".format(eval_dataset, preds_file)
+    cmd = "python3 /home/suster/Apps/bmj_case_reports/evaluate.py -test_file {} -prediction_file {} -embeddings_file /nas/corpora/accumulate/clicr/embeddings/b2257916-6a9f-11e7-aa74-901b0e5592c8/embeddings -downcase".format(eval_dataset, preds_file)
     cmd_open = subprocess.check_output(cmd, shell=True)
     with open(file_name, "w") as fh:
         fh.write(cmd_open)
 
     logging.info("External evaluation, NOT penalizing unanswered...")
     save_json(intersect_on_ids(load_json(eval_dataset), load_json(preds_file)), "/tmp/small.json")
-    cmd = "python3 /home/suster/Apps/bmj_case_reports/evaluate.py -dataset_file /tmp/small.json -prediction_file {} -embeddings_file /mnt/b5320167-5dbd-4498-bf34-173ac5338c8d/Datasets/bmj_case_reports_data/embeddings/c47cfee6-3fc4-11e7-b5a2-4ccc6a436494/embeddings -downcase".format(
+    cmd = "python3 /home/suster/Apps/bmj_case_reports/evaluate.py -test_file /tmp/small.json -prediction_file {} -embeddings_file /nas/corpora/accumulate/clicr/embeddings/b2257916-6a9f-11e7-aa74-901b0e5592c8/embeddings -downcase".format(
         preds_file)
     cmd_open = subprocess.check_output(cmd, shell=True)
     with open(file_name+".no_penal", "w") as fh:

@@ -25,6 +25,11 @@ def get_args():
                         default=False,
                         help='test_only: no need to run training process')
 
+    parser.add_argument('--cnn_train',
+                        type='bool',
+                        default=False,
+                        help='Whether to train a model on the CNN cloze dataset.')
+
     parser.add_argument('--random_seed',
                         type=int,
                         default=1013,
@@ -74,7 +79,7 @@ def get_args():
 
     parser.add_argument('--hidden_size',
                         type=int,
-                        default=128,
+                        default=72,
                         help='Hidden size of RNN units')
 
     parser.add_argument('--bidir',
@@ -115,7 +120,7 @@ def get_args():
 
     parser.add_argument('--dropout_rate',
                         type=float,
-                        default=0.2,
+                        default=0.61,
                         help='Dropout rate')
 
     parser.add_argument('--optimizer',
@@ -147,6 +152,6 @@ def get_args():
                         help='Only the max_words ones are kept and the remaining will be mapped to <UNK>')
     parser.add_argument('--att_output',
                         type='bool',
-                        default=True,
+                        default=False,
                         help='Whether to output attention weights')
     return parser.parse_args()
