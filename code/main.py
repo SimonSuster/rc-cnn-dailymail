@@ -353,7 +353,9 @@ def main(args):
     train_accs = []
     dev_accs = []
     all_train = gen_examples(train_x1, train_x2, train_l, train_y, args.batch_size)
+    improved = []
     for epoch in range(args.num_epoches):
+        ep_acc_improved = False
         np.random.shuffle(all_train)
         for idx, (mb_x1, mb_mask1, mb_x2, mb_mask2, mb_l, mb_y) in enumerate(all_train):
             logging.info('#Examples = %d, max_len = %d' % (len(mb_x1), mb_x1.shape[1]))
@@ -378,6 +380,7 @@ def main(args):
                 logging.info('Dev accuracy: %.2f %%' % dev_acc)
                 utils.update_plot(args.eval_iter, train_accs, dev_accs, file_name=args.log_file + ".html")
                 if dev_acc > best_acc:
+                    ep_acc_improved = True
                     best_acc = dev_acc
                     logging.info('Best dev accuracy: epoch = %d, n_udpates = %d, acc = %.2f %%'
                                  % (epoch, n_updates, dev_acc))
@@ -388,6 +391,10 @@ def main(args):
                             dev_preds_data = to_output_preds(dev_ids, dev_preds, inv_entity_dict, args.relabeling)
                             utils.write_preds(dev_preds_data, preds_file_name)
                             utils.external_eval(preds_file_name, run_name + ".preds.scores", args.dev_file)
+        improved.append(ep_acc_improved)
+        # early stop
+        if len(improved) > 25 and sum(improved[-3:]) == 0:
+            break
 
 
 if __name__ == '__main__':
@@ -426,4 +433,5 @@ if __name__ == '__main__':
                             format='%(asctime)s %(message)s', datefmt='%m-%d %H:%M')
 
     logging.info(' '.join(sys.argv))
+    logging.info(args)
     main(args)
