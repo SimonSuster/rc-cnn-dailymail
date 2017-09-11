@@ -5,8 +5,8 @@ import numpy as np
 
 def stanford_reader_parameter_space():
     return {
-    "hidden_size": (16, 160),
-    "dropout_rate": (0.1, 0.9)
+    "hidden_size": (50, 160),
+    "dropout_rate": (0.1, 0.7)
     #"optimizer": ["sgd", "rmsprop"]
     #"grad_clipping":
     }
