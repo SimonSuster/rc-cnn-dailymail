@@ -32,7 +32,7 @@ def get_args():
 
     parser.add_argument('--random_seed',
                         type=int,
-                        default=1013,
+                        default=2,
                         help='Random seed')
 
     # Data file

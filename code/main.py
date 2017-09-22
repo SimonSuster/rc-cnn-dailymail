@@ -251,13 +251,14 @@ def main(args):
                                          remove_notfound=args.remove_notfound)
         logging.info('*' * 10 + ' Dev')
         dev_examples = utils.load_data(args.dev_file, 100, relabeling=args.relabeling,
-                                       remove_notfound=args.remove_notfound)
+                                       remove_notfound=False)
     elif args.test_only:
         logging.info('*' * 10 + ' Train')
-        train_examples = utils.load_cnn_data(args.train_file, relabeling=args.relabeling)  # docs, qs, ans
+        #train_examples = utils.load_cnn_data(args.train_file, relabeling=args.relabeling)  # docs, qs, ans
+        train_examples = utils.load_data(args.train_file, relabeling=args.relabeling)  # docs, qs, ans
         logging.info('*' * 10 + ' Dev')
         dev_examples = utils.load_data(args.dev_file, args.max_dev, relabeling=args.relabeling,
-                                       remove_notfound=args.remove_notfound)
+                                       remove_notfound=False)
     elif args.cnn_train:
         logging.info('*' * 10 + ' Train')
         train_examples = utils.load_cnn_data(args.train_file, relabeling=args.relabeling)  # docs, qs, ans
@@ -269,7 +270,7 @@ def main(args):
                                          remove_notfound=args.remove_notfound)  # docs, qs, ans
         logging.info('*' * 10 + ' Dev')
         dev_examples = utils.load_data(args.dev_file, args.max_dev, relabeling=args.relabeling,
-                                       remove_notfound=args.remove_notfound)
+                                       remove_notfound=False)
 
     args.num_train = len(train_examples[0])
     args.num_dev = len(dev_examples[0])
@@ -301,7 +302,7 @@ def main(args):
     logging.info('-' * 50)
     logging.info('Intial test..')
     dev_x1, dev_x2, dev_l, dev_y, dev_ids = utils.vectorize(dev_examples, word_dict, entity_dict,
-                                                   remove_notfound=args.remove_notfound,
+                                                   remove_notfound=False,
                                                    relabeling=args.relabeling)
     if dev_ids is not None:
         assert len(dev_y) == len(dev_ids)

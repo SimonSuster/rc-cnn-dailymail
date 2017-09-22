@@ -142,7 +142,7 @@ def load_data(in_file, max_example=None, relabeling=True, remove_notfound=False)
                     if not found_umls:
                         continue
             if relabeling:
-                assert answer in _d_words
+                #assert answer in _d_words
                 _q_words = question.split()
                 entity_dict = {}
                 entity_id = 0
@@ -561,4 +561,4 @@ def update_plot(eval_iter, train_accs, dev_accs, file_name):
         fh.write(footer)
     if len(train_accs) == 5:
         url = "file://" + os.path.abspath(file_name)
-        webbrowser.get('firefox').open_new_tab(url)
+        #webbrowser.get('firefox').open_new_tab(url)
