@@ -107,7 +107,7 @@ class _Chen_BilinearAttentionLayer(lasagne.layers.MergeLayer):
             raise NotImplementedError
         if mask_input is not None:
             incomings.append(mask_input)
-        super(BilinearAttentionLayer, self).__init__(incomings, **kwargs)
+        super(_Chen_BilinearAttentionLayer, self).__init__(incomings, **kwargs)
         self.num_units = num_units
         self.W = self.add_param(init, (self.num_units, self.num_units), name='W_bilinear')
 

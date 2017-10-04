@@ -394,8 +394,8 @@ def main(args):
                             utils.external_eval(preds_file_name, run_name + ".preds.scores", args.dev_file)
         improved.append(ep_acc_improved)
         # early stop
-        if len(improved) > 25 and sum(improved[-3:]) == 0:
-            break
+        #if len(improved) > 25 and sum(improved[-3:]) == 0:
+        #    break
 
 
 if __name__ == '__main__':
