@@ -51,11 +51,6 @@ def get_args():
                         default=None,
                         help='Pre-trained model.')
 
-    parser.add_argument('--model_file',
-                        type=str,
-                        default='model.pkl.gz',
-                        help='Model file to save')
-
     parser.add_argument('--log_file',
                         type=str,
                         default=None,
@@ -150,8 +145,7 @@ def get_args():
                         type=int,
                         default=50000,
                         help='Only the max_words ones are kept and the remaining will be mapped to <UNK>')
-    parser.add_argument('--att_output',
-                        type='bool',
+    parser.add_argument('--has_ids',
                         default=False,
-                        help='Whether to output attention weights')
+                        help='When using cnn-style loader, are question ids present?')
     return parser.parse_args()

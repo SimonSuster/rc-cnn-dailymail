@@ -177,7 +177,7 @@ def load_data(in_file, max_example=None, relabeling=True, remove_notfound=False)
     return documents, questions, answers, ids
 
 
-def load_cnn_data(in_file, max_example=None, relabeling=True):
+def load_cnn_data(in_file, max_example=None, relabeling=True, has_ids=False):
     """
         load CNN / Daily Mail data from {train | dev | test}.txt
         relabeling: relabel the entities by their first occurence if it is True.
@@ -186,6 +186,8 @@ def load_cnn_data(in_file, max_example=None, relabeling=True):
     documents = []
     questions = []
     answers = []
+    if has_ids:
+        ids = []
     num_examples = 0
     f = open(in_file, 'r')
     while True:
@@ -195,6 +197,8 @@ def load_cnn_data(in_file, max_example=None, relabeling=True):
         question = line.strip().lower()
         answer = f.readline().strip()
         document = f.readline().strip().lower()
+        if has_ids:
+            id = f.readline().strip()
 
         if relabeling:
             q_words = question.split(' ')
@@ -218,6 +222,8 @@ def load_cnn_data(in_file, max_example=None, relabeling=True):
         questions.append(question)
         answers.append(answer)
         documents.append(document)
+        if has_ids:
+            ids.append(id)
         num_examples += 1
 
         f.readline()
@@ -225,7 +231,7 @@ def load_cnn_data(in_file, max_example=None, relabeling=True):
             break
     f.close()
     logging.info('#Examples: %d' % len(documents))
-    return (documents, questions, answers)
+    return (documents, questions, answers, ids if has_ids else None)
 
 
 def build_dict(sentences, max_words=50000):
@@ -267,8 +273,6 @@ def vectorize(examples, word_dict, entity_dict,
     for idx, (d, q, a) in enumerate(zip(examples[0], examples[1], examples[2])):
         d_words = d.split(' ')
         q_words = q.split(' ')
-        if remove_notfound:
-            assert (a in d_words)
         seq1 = [word_dict[w] if w in word_dict else 0 for w in d_words]
         seq2 = [word_dict[w] if w in word_dict else 0 for w in q_words]
         if (len(seq1) > 0) and (len(seq2) > 0):
@@ -490,19 +494,12 @@ slug: "r3o4mgum"
         fh.write(footer_start + footer_qa + footer_end)
 
 
-def external_eval(preds_file, file_name, eval_dataset):
+def external_eval(preds_file, file_name, eval_data="dev"):
+    eval_dataset = "/mnt/b5320167-5dbd-4498-bf34-173ac5338c8d/Datasets/bmj_case_reports_data/dataset_json_concept_annotated/" + "{}1.0.json".format(eval_data)
     logging.info("External evaluation, penalizing unanswered...")
-    cmd = "python3 /home/suster/Apps/bmj_case_reports/evaluate.py -test_file {} -prediction_file {} -embeddings_file /nas/corpora/accumulate/clicr/embeddings/b2257916-6a9f-11e7-aa74-901b0e5592c8/embeddings -downcase".format(eval_dataset, preds_file)
+    cmd = "python3 /home/suster/Apps/bmj_case_reports/evaluate.py -test_file {} -prediction_file {} -embeddings_file /nas/corpora/accumulate/clicr/embeddings/b2257916-6a9f-11e7-aa74-901b0e5592c8/embeddings -downcase -extended".format(eval_dataset, preds_file)
     cmd_open = subprocess.check_output(cmd, shell=True)
     with open(file_name, "w") as fh:
-        fh.write(cmd_open)
-
-    logging.info("External evaluation, NOT penalizing unanswered...")
-    save_json(intersect_on_ids(load_json(eval_dataset), load_json(preds_file)), "/tmp/small.json")
-    cmd = "python3 /home/suster/Apps/bmj_case_reports/evaluate.py -test_file /tmp/small.json -prediction_file {} -embeddings_file /nas/corpora/accumulate/clicr/embeddings/b2257916-6a9f-11e7-aa74-901b0e5592c8/embeddings -downcase".format(
-        preds_file)
-    cmd_open = subprocess.check_output(cmd, shell=True)
-    with open(file_name+".no_penal", "w") as fh:
         fh.write(cmd_open)
 
 
