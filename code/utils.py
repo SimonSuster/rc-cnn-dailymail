@@ -203,11 +203,10 @@ def load_cnn_data(in_file, max_example=None, relabeling=True, has_ids=False):
         if relabeling:
             q_words = question.split(' ')
             d_words = document.split(' ')
-            assert answer in d_words
-
+            #assert answer in d_words
             entity_dict = {}
             entity_id = 0
-            for word in d_words + q_words:
+            for word in d_words + q_words + ([answer] if answer not in d_words else []):
                 if (word.startswith('@entity')) and (word not in entity_dict):
                     entity_dict[word] = '@entity' + str(entity_id)
                     entity_id += 1
@@ -215,14 +214,17 @@ def load_cnn_data(in_file, max_example=None, relabeling=True, has_ids=False):
             q_words = [entity_dict[w] if w in entity_dict else w for w in q_words]
             d_words = [entity_dict[w] if w in entity_dict else w for w in d_words]
             answer = entity_dict[answer]
-
             question = ' '.join(q_words)
             document = ' '.join(d_words)
+            inv_entity_dict = {ent_id: ent_ans for ent_ans, ent_id in entity_dict.items()}
+            assert len(entity_dict) == len(inv_entity_dict)
+            if has_ids:
+                ids.append((id, inv_entity_dict))
 
         questions.append(question)
         answers.append(answer)
         documents.append(document)
-        if has_ids:
+        if not relabeling and has_ids:
             ids.append(id)
         num_examples += 1
 
@@ -408,6 +410,13 @@ def write_att(atts, file_name):
 
 
 def att_html(preds_file_name, preds_att_file_name, qid, html_file):
+    """
+    :param preds_file_name: contains predictions for all queries (qids)
+    :param preds_att_file_name: contains attention weights for all queries/docs
+    :param qid: the query id that we want to obtain html for
+    :param html_file: name of the html output file
+    """
+
     header = """
     <!DOCTYPE html>
     <html>
@@ -469,8 +478,11 @@ slug: "r3o4mgum"
 
     preds = load_json(preds_file_name)
     atts = load_json(preds_att_file_name)
+    # get the predicted answer for the right query id
     a = preds[qid]
+    # get attention weights
     d_att = atts[qid]["d_att"]
+    # get the query
     q = atts[qid]["q"]
 
     core_ws = []

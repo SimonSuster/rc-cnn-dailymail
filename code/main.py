@@ -202,9 +202,9 @@ def main(args):
     #                                   remove_notfound=False)
     elif args.cnn_train:
         logging.info('*' * 10 + ' Train')
-        train_examples = utils.load_cnn_data(args.train_file, relabeling=args.relabeling, has_ids=args.has_ids)  # docs, qs, ans
+        train_examples = utils.load_cnn_data(args.train_file, relabeling=args.relabeling, has_ids=args.train_has_ids)  # docs, qs, ans
         logging.info('*' * 10 + ' Dev')
-        dev_examples = utils.load_cnn_data(args.dev_file, args.max_dev, relabeling=args.relabeling, has_ids=args.has_ids)
+        dev_examples = utils.load_cnn_data(args.dev_file, args.max_dev, relabeling=args.relabeling, has_ids=args.dev_has_ids)
     else:
         logging.info('*' * 10 + ' Train')
         train_examples = utils.load_data(args.train_file, relabeling=args.relabeling,

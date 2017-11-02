@@ -145,7 +145,12 @@ def get_args():
                         type=int,
                         default=50000,
                         help='Only the max_words ones are kept and the remaining will be mapped to <UNK>')
-    parser.add_argument('--has_ids',
+    parser.add_argument('--train_has_ids',
+                        type='bool',
                         default=False,
-                        help='When using cnn-style loader, are question ids present?')
+                        help='When using cnn-style loader, are question ids in trainset present?')
+    parser.add_argument('--dev_has_ids',
+                        type='bool',
+                        default=False,
+                        help='When using cnn-style loader, are question ids in dev/testset present?')
     return parser.parse_args()
